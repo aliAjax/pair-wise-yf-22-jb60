@@ -1,0 +1,1 @@
+package com.generated.qualityTrace.repositories; import java.util.*; import org.springframework.stereotype.Repository; @Repository public class InspectionItemResultRepository { public List<Map<String,Object>> findAll(){ return List.of(Map.of("id",1,"name","检验项结果","status","READY")); } }

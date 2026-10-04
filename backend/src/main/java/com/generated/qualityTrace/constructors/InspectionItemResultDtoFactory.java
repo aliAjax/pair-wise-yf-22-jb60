@@ -1,0 +1,1 @@
+package com.generated.qualityTrace.constructors; import java.util.*; public final class InspectionItemResultDtoFactory { public static Map<String,Object> create(){ return Map.of("id",1,"name","检验项结果"); } }
