@@ -37,6 +37,49 @@ cp .env.example .env && docker compose up -d
 backend/src/routes, controllers, services, models, repositories, middlewares, constants, constructors, utils, types, config
 ```
 
+## 检验任务派发与检验员资质
+
+针对「检验任务靠口头派给谁、资质过期也能接单出结论」的问题，把**检验任务、检验员资质、批次检验结论**三者接起来。
+
+**任务状态机**：
+
+```
+待派 PENDING ──派发──▶ 待接单 POOLED ──领取──▶ 已接单 CLAIMED ──提交──▶ 已提交 SUBMITTED
+     ▲                    │
+     └──── 派发失败重试 / 资质过期退回 ◀┘
+```
+
+**业务规则**：
+
+| 规则 | 实现 |
+|---|---|
+| 按检验类型派给资质有效的检验员 | 派发时按 `inspection_type` + 资质 `VALID` + 有效期内筛选可接单人 |
+| 两人同时领取同一任务，只有先到的拿到 | 领取走数据库原子条件 `UPDATE ... WHERE status='POOLED'`，命中 1 行者成功，另一方收到 `TASK_ALREADY_CLAIMED` |
+| 资质过期重新确认接单人 | 批处理每日扫描到期资质置 `EXPIRED`，把已接单未提交的任务退回 `PENDING`；已提交(`SUBMITTED`)结论照旧有效 |
+| 派发失败可重试 | 无可派检验员时返回 `retryable=true` 的 `TASK_DISPATCH_FAILED`，任务停留在 `PENDING`，记录失败次数与原因，可再次派发 |
+| 越权领取直接拒绝 | 领取人不具备该类型有效资质时返回 `TASK_CLAIM_FORBIDDEN`(403)，任务不被领走 |
+| 按批号追溯返回检验员与当时资质 | 提交结论时固化检验员快照与资质快照(`qualification_snapshot`)，追溯接口原样返回 |
+
+**接口**：
+
+- `POST /api/auth/login` 登录获取 JWT
+- `POST /api/inspectors` 创建检验员（质量经理）
+- `GET /api/inspectors` 检验员列表（主管/经理）
+- `POST /api/qualifications` 授予/重新授予资质（质量经理）
+- `POST /api/qualifications/{id}/revoke` 吊销资质（质量经理）
+- `POST /api/qualifications/revalidate` 手动触发到期重新确认（每日 03:15 也会自动执行）
+- `GET /api/qualifications?inspectorId=` 查询检验员资质
+- `POST /api/inspection-tasks` 创建检验任务（主管/经理）
+- `POST /api/inspection-tasks/{id}/dispatch` 派发/重试（主管/经理）
+- `POST /api/inspection-tasks/{id}/claim` 领取任务（质检员，先到先得，越权拒绝）
+- `POST /api/inspection-tasks/{id}/submit` 提交结论（质检员本人）
+- `GET /api/inspection-tasks` 任务列表（可按 `status` 过滤）
+- `GET /api/trace/{batchNo}` 批次追溯（含检验员与当时资质）
+
+**角色（RBAC）**：质检员 `INSPECTOR` / 产线主管 `SUPERVISOR` / 质量经理 `MANAGER` / 审计员 `AUDITOR`。
+
+**种子数据**：2 名检验员（张质检持首检+终检有效资质；李质检巡检资质已过期）、1 名主管、1 名经理、1 名审计员，以及 1 张待派的首检任务，可直接体验派发 → 领取 → 提交 → 追溯。
+
 ## 环境变量说明
 
 - `COMPOSE_PROJECT_NAME`: Compose 项目名，默认 `quality-trace`
